@@ -1,0 +1,339 @@
+"""
+Hyper-Local Sustainability Marketplace
+GraphQL Schema
+Architecture: Clean Architecture
+Stack: PostgreSQL + PostGIS, GraphQL (Apollo)
+"""
+
+# ─────────────────────────────────────────────
+# SCALARS
+# ─────────────────────────────────────────────
+
+scalar DateTime
+scalar Upload
+
+# ─────────────────────────────────────────────
+# ENUMS
+# ─────────────────────────────────────────────
+
+enum Role {
+  USER
+  ARTISAN
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum DeliveryType {
+  BICYCLE_ONLY
+}
+
+enum ArtisanStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  SUSPENDED
+}
+
+# ─────────────────────────────────────────────
+# VALUE OBJECTS
+# ─────────────────────────────────────────────
+
+type GeoPoint {
+  lat: Float!
+  lng: Float!
+}
+
+input GeoPointInput {
+  lat: Float!   # Must be between -90 and 90
+  lng: Float!   # Must be between -180 and 180
+}
+
+type DeliveryZone {
+  center: GeoPoint!
+  radiusKm: Float!  # Must not exceed platform max (50km)
+}
+
+# ─────────────────────────────────────────────
+# CORE TYPES
+# ─────────────────────────────────────────────
+
+type User {
+  id: ID!
+  name: String!
+  email: String!
+  role: Role!
+  location: GeoPoint
+  createdAt: DateTime!
+  updatedAt: DateTime!
+
+  # Relations
+  orders: [Order!]!
+  nearbyArtisans(radiusKm: Float = 50): [Artisan!]!
+}
+
+type Artisan {
+  id: ID!
+  userId: ID!
+  user: User!
+  businessName: String!
+  description: String
+  status: ArtisanStatus!
+  zeroPackaging: Boolean!
+  sustainabilityScore: Float!   # 0.0 - 100.0, recalculated on data change
+  location: GeoPoint!
+  deliveryZone: DeliveryZone!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+
+  # Relations
+  products(availableOnly: Boolean = true): [Product!]!
+  orders: [Order!]!
+}
+
+type Product {
+  id: ID!
+  artisanId: ID!
+  artisan: Artisan!
+  name: String!
+  description: String
+  price: Float!       # Must be > 0
+  imageUrl: String
+  isAvailable: Boolean!
+  category: String
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type Order {
+  id: ID!
+  userId: ID!
+  user: User!
+  artisanId: ID!
+  artisan: Artisan!
+  items: [OrderItem!]!
+  status: OrderStatus!
+  deliveryType: DeliveryType!   # Always BICYCLE_ONLY
+  distanceKm: Float!            # Must be <= 50
+  carbonSavedKg: Float!         # Calculated at order time
+  totalAmount: Float!
+  deliveryAddress: String!
+  deliveryLocation: GeoPoint!
+  placedAt: DateTime!
+  deliveredAt: DateTime
+}
+
+type OrderItem {
+  id: ID!
+  orderId: ID!
+  productId: ID!
+  product: Product!
+  quantity: Int!
+  unitPrice: Float!
+  subtotal: Float!
+}
+
+# ─────────────────────────────────────────────
+# AUTH
+# ─────────────────────────────────────────────
+
+type AuthPayload {
+  token: String!
+  user: User!
+}
+
+# ─────────────────────────────────────────────
+# CHATBOT
+# ─────────────────────────────────────────────
+
+type ChatMessage {
+  role: String!       # "user" | "assistant"
+  content: String!
+  timestamp: DateTime!
+}
+
+type ChatResponse {
+  message: ChatMessage!
+  suggestedProducts: [Product!]
+  suggestedArtisans: [Artisan!]
+}
+
+# ─────────────────────────────────────────────
+# PAGINATION
+# ─────────────────────────────────────────────
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  total: Int!
+}
+
+type ArtisanConnection {
+  nodes: [Artisan!]!
+  pageInfo: PageInfo!
+}
+
+type ProductConnection {
+  nodes: [Product!]!
+  pageInfo: PageInfo!
+}
+
+# ─────────────────────────────────────────────
+# QUERY
+# ─────────────────────────────────────────────
+
+type Query {
+  # Auth / User
+  me: User
+
+  # Artisans
+  artisan(id: ID!): Artisan
+  nearbyArtisans(
+    location: GeoPointInput!
+    radiusKm: Float = 50
+    category: String
+    zeroPackagingOnly: Boolean = false
+    minSustainabilityScore: Float
+    limit: Int = 20
+    offset: Int = 0
+  ): ArtisanConnection!
+
+  # Products
+  product(id: ID!): Product
+  products(
+    artisanId: ID
+    category: String
+    location: GeoPointInput        # Filter by proximity of artisan
+    radiusKm: Float = 50
+    limit: Int = 20
+    offset: Int = 0
+  ): ProductConnection!
+
+  # Orders
+  order(id: ID!): Order
+  myOrders(status: OrderStatus, limit: Int = 10, offset: Int = 0): [Order!]!
+
+  # Admin
+  pendingArtisans: [Artisan!]!    # Admin only
+  allUsers(limit: Int = 50, offset: Int = 0): [User!]!  # Admin only
+}
+
+# ─────────────────────────────────────────────
+# MUTATIONS
+# ─────────────────────────────────────────────
+
+type Mutation {
+  # ── Auth ──
+  register(input: RegisterInput!): AuthPayload!
+  login(input: LoginInput!): AuthPayload!
+
+  # ── User ──
+  updateMyLocation(location: GeoPointInput!): User!
+
+  # ── Artisan ──
+  registerAsArtisan(input: RegisterArtisanInput!): Artisan!
+  updateArtisanProfile(input: UpdateArtisanInput!): Artisan!
+  enableZeroPackaging: Artisan!
+
+  # ── Admin ──
+  verifyArtisan(artisanId: ID!): Artisan!
+  suspendArtisan(artisanId: ID!): Artisan!
+
+  # ── Product ──
+  createProduct(input: CreateProductInput!): Product!
+  updateProduct(id: ID!, input: UpdateProductInput!): Product!
+  markProductUnavailable(id: ID!): Product!
+  deleteProduct(id: ID!): Boolean!
+
+  # ── Order ──
+  placeOrder(input: PlaceOrderInput!): Order!
+  confirmOrder(orderId: ID!): Order!     # Artisan confirms
+  markDelivered(orderId: ID!): Order!    # Artisan marks delivered
+  cancelOrder(orderId: ID!): Order!
+
+  # ── Chatbot (Optional) ──
+  sendChatMessage(
+    message: String!
+    userLocation: GeoPointInput
+    conversationHistory: [ChatMessageInput!]
+  ): ChatResponse!
+}
+
+# ─────────────────────────────────────────────
+# SUBSCRIPTIONS
+# ─────────────────────────────────────────────
+
+type Subscription {
+  orderStatusChanged(orderId: ID!): Order!
+  newOrderForArtisan(artisanId: ID!): Order!
+}
+
+# ─────────────────────────────────────────────
+# INPUT TYPES
+# ─────────────────────────────────────────────
+
+input RegisterInput {
+  name: String!
+  email: String!
+  password: String!
+  role: Role = USER
+  location: GeoPointInput
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+input RegisterArtisanInput {
+  businessName: String!
+  description: String
+  location: GeoPointInput!
+  zeroPackaging: Boolean = false
+}
+
+input UpdateArtisanInput {
+  businessName: String
+  description: String
+  location: GeoPointInput
+  zeroPackaging: Boolean
+}
+
+input CreateProductInput {
+  name: String!
+  description: String
+  price: Float!
+  category: String
+  imageUrl: String
+}
+
+input UpdateProductInput {
+  name: String
+  description: String
+  price: Float
+  category: String
+  imageUrl: String
+  isAvailable: Boolean
+}
+
+input PlaceOrderInput {
+  artisanId: ID!
+  items: [OrderItemInput!]!
+  deliveryAddress: String!
+  deliveryLocation: GeoPointInput!
+}
+
+input OrderItemInput {
+  productId: ID!
+  quantity: Int!
+}
+
+input ChatMessageInput {
+  role: String!
+  content: String!
+}

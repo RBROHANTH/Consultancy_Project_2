@@ -1,0 +1,19 @@
+{
+  "name": "hyperlocal-backend-module1",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "migrate": "psql $DATABASE_URL -f migrations/001_extensions_and_users.sql"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.10.0",
+    "graphql": "^16.8.0",
+    "pg": "^8.11.0",
+    "bcrypt": "^5.1.1",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^9.0.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  }
+}
